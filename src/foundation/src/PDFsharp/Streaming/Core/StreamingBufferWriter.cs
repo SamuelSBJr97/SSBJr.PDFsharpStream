@@ -30,16 +30,18 @@ namespace PdfSharp.Streaming.Core
         private readonly Stream _underlyingStream;
         private readonly int _bufferSize;
         private bool _disposed;
+        private long _totalBytesWritten;
 
         /// <summary>
         /// Gets the current position in the underlying stream (accounting for buffered data).
+        /// This is manually tracked and works with forward-only streams.
         /// </summary>
         public long Position 
         { 
             get 
             { 
                 if (_disposed) throw new ObjectDisposedException(nameof(StreamingBufferWriter));
-                return _underlyingStream.Position + _position; 
+                return _totalBytesWritten + _position; 
             } 
         }
 
@@ -62,6 +64,7 @@ namespace PdfSharp.Streaming.Core
             _bufferSize = bufferSize;
             _buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
             _position = 0;
+            _totalBytesWritten = 0;
         }
 
         /// <summary>
@@ -104,6 +107,7 @@ namespace PdfSharp.Streaming.Core
             if (_position > 0)
             {
                 _underlyingStream.Write(_buffer, 0, _position);
+                _totalBytesWritten += _position;
                 _position = 0;
             }
         }
@@ -118,6 +122,7 @@ namespace PdfSharp.Streaming.Core
             if (_position > 0)
             {
                 await _underlyingStream.WriteAsync(_buffer, 0, _position);
+                _totalBytesWritten += _position;
                 _position = 0;
             }
         }

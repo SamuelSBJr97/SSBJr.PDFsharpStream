@@ -26,7 +26,7 @@ namespace PdfSharp.Streaming.Model
     /// </summary>
     public class StreamingPdfWriter : IAsyncDisposable
     {
-        private readonly FileStream _fileStream;
+        private readonly Stream _outputStream;
         private StreamingBufferWriter? _bufferedWriter;
         private StreamingXrefTable _xrefTable;
         private List<int> _pageObjectIds;
@@ -35,6 +35,7 @@ namespace PdfSharp.Streaming.Model
         private int _infoDictObjectId;
         private bool _finalized;
         private bool _disposed;
+        private bool _ownsStream;
 
         /// <summary>
         /// Gets the number of objects written so far.
@@ -47,7 +48,7 @@ namespace PdfSharp.Streaming.Model
         public bool IsFinalized => _finalized;
 
         /// <summary>
-        /// Initializes a new instance of StreamingPdfWriter.
+        /// Initializes a new instance of StreamingPdfWriter with a file path.
         /// </summary>
         /// <param name="filePath">The file path where the PDF will be written.</param>
         public StreamingPdfWriter(string filePath)
@@ -55,8 +56,31 @@ namespace PdfSharp.Streaming.Model
             if (string.IsNullOrEmpty(filePath))
                 throw new ArgumentNullException(nameof(filePath));
 
-            _fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 65536);
-            _bufferedWriter = new StreamingBufferWriter(_fileStream, 65536);
+            _outputStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 65536);
+            _ownsStream = true;
+            _bufferedWriter = new StreamingBufferWriter(_outputStream, 65536);
+            _xrefTable = new StreamingXrefTable();
+            _pageObjectIds = new List<int>();
+
+            WriteFileHeader();
+        }
+
+        /// <summary>
+        /// Initializes a new instance of StreamingPdfWriter with a stream.
+        /// Works with forward-only streams (like HTTP response streams).
+        /// </summary>
+        /// <param name="stream">The stream where the PDF will be written. Must be writable.</param>
+        /// <param name="ownsStream">If true, the stream will be disposed when the writer is disposed.</param>
+        public StreamingPdfWriter(Stream stream, bool ownsStream = false)
+        {
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (!stream.CanWrite)
+                throw new ArgumentException("Stream must be writable.", nameof(stream));
+
+            _outputStream = stream;
+            _ownsStream = ownsStream;
+            _bufferedWriter = new StreamingBufferWriter(stream, 65536);
             _xrefTable = new StreamingXrefTable();
             _pageObjectIds = new List<int>();
 
@@ -168,18 +192,21 @@ namespace PdfSharp.Streaming.Model
 
             // 5. Calculate and write xref table
             byte[] xrefBytes = _xrefTable.GenerateXrefTable();
-            long xrefOffset = _fileStream.Position;
-            _fileStream.Write(xrefBytes);
+            long xrefOffset = _bufferedWriter.Position;  // Use buffered writer's position (works with forward-only streams)
+            _bufferedWriter.Write(xrefBytes);
 
             // 6. Write trailer
             string trailer = _xrefTable.GenerateTrailer();
             var trailerBytes = Encoding.ASCII.GetBytes(trailer + "\n");
-            _fileStream.Write(trailerBytes);
+            _bufferedWriter.Write(trailerBytes);
 
             // 7. Write startxref and EOF
             string startxref = $"startxref\n{xrefOffset}\n%%EOF\n";
             var startxrefBytes = Encoding.ASCII.GetBytes(startxref);
-            _fileStream.Write(startxrefBytes);
+            _bufferedWriter.Write(startxrefBytes);
+
+            // 8. Final flush to ensure all data is written
+            await _bufferedWriter.FlushAsync();
 
             _finalized = true;
         }
@@ -244,7 +271,7 @@ namespace PdfSharp.Streaming.Model
         }
 
         /// <summary>
-        /// Asynchronously disposes the writer and closes the file.
+        /// Asynchronously disposes the writer and closes the underlying stream if owned.
         /// </summary>
         public async ValueTask DisposeAsync()
         {
@@ -263,7 +290,10 @@ namespace PdfSharp.Streaming.Model
                     _bufferedWriter = null;
                 }
 
-                _fileStream?.Dispose();
+                if (_ownsStream)
+                {
+                    _outputStream?.Dispose();
+                }
             }
             finally
             {
@@ -286,7 +316,11 @@ namespace PdfSharp.Streaming.Model
                 }
 
                 _bufferedWriter?.Dispose();
-                _fileStream?.Dispose();
+
+                if (_ownsStream)
+                {
+                    _outputStream?.Dispose();
+                }
             }
             finally
             {

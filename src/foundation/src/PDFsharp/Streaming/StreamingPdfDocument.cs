@@ -12,6 +12,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using PdfSharp.Streaming.Model;
 using PdfSharp.Streaming.Pages;
@@ -24,16 +25,18 @@ namespace PdfSharp.Streaming
     /// </summary>
     public class StreamingPdfDocument : IAsyncDisposable
     {
-        private readonly string _filePath;
+        private readonly string? _filePath;
+        private readonly Stream? _outputStream;
+        private readonly bool _ownsStream;
         private StreamingPdfWriter? _writer;
         private List<StreamingPdfPage> _pages;
         private int _pageCount;
         private bool _disposed;
 
         /// <summary>
-        /// Gets the file path where the PDF will be written.
+        /// Gets the file path where the PDF will be written (if using file-based constructor).
         /// </summary>
-        public string FilePath => _filePath;
+        public string? FilePath => _filePath;
 
         /// <summary>
         /// Gets the number of pages in the document.
@@ -46,7 +49,7 @@ namespace PdfSharp.Streaming
         public StreamingPdfWriter? Writer => _writer;
 
         /// <summary>
-        /// Initializes a new instance of StreamingPdfDocument.
+        /// Initializes a new instance of StreamingPdfDocument with a file path.
         /// </summary>
         /// <param name="filePath">The output file path for the PDF.</param>
         public StreamingPdfDocument(string filePath)
@@ -55,7 +58,30 @@ namespace PdfSharp.Streaming
                 throw new ArgumentNullException(nameof(filePath));
 
             _filePath = filePath;
+            _outputStream = null;
+            _ownsStream = false;
             _writer = new StreamingPdfWriter(filePath);
+            _pages = new List<StreamingPdfPage>();
+            _pageCount = 0;
+        }
+
+        /// <summary>
+        /// Initializes a new instance of StreamingPdfDocument with a stream.
+        /// Works with forward-only streams (like HTTP response streams).
+        /// </summary>
+        /// <param name="stream">The stream where the PDF will be written. Must be writable.</param>
+        /// <param name="ownsStream">If true, the stream will be disposed when the document is disposed.</param>
+        public StreamingPdfDocument(Stream stream, bool ownsStream = false)
+        {
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (!stream.CanWrite)
+                throw new ArgumentException("Stream must be writable.", nameof(stream));
+
+            _filePath = null;
+            _outputStream = stream;
+            _ownsStream = ownsStream;
+            _writer = new StreamingPdfWriter(stream, ownsStream);
             _pages = new List<StreamingPdfPage>();
             _pageCount = 0;
         }
